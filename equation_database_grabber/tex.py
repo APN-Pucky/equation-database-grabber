@@ -4,6 +4,8 @@ import subprocess
 import tarfile
 import tempfile
 
+import requests
+
 
 def inject_labels(tex_source):
     env_pattern = re.compile(
@@ -17,8 +19,10 @@ def inject_labels(tex_source):
         content = match.group(2)
         counter[0] += 1
         label = f"eq:auto-{counter[0]}"
+        # Remove any existing \label{} commands from the content
+        content = re.sub(r"\\label\{[^}]*\}", "", content)
         contents.append((label, content))
-        return f"\\begin{{{env}}}{content}\n\\label{{{label}}}\\end{{{env}}}"
+        return f"\\begin{{{env}}}{content}\\label{{{label}}}\\end{{{env}}}"
 
     return env_pattern.sub(replacer, tex_source), contents
 
@@ -57,7 +61,7 @@ def get_equations(arxiv_tar_gz):
 
     # First extract the tar.gz file into a temporary directory
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with tempfile.TemporaryDirectory(delete=False) as temp_dir:
         with tarfile.open(arxiv_tar_gz, "r:gz") as tar:
             tar.extractall(path=temp_dir)
 
@@ -94,6 +98,7 @@ def get_equations(arxiv_tar_gz):
             print(f"Warning: pdflatex failed with return code {result.returncode}")
             print(f"stderr: {result.stderr}")
             # Continue anyway as .aux file might still be generated
+            print("Path to .tex file:", tex_file_path)
 
         # replace tex suffix with aux
         aux_file_path = os.path.splitext(tex_file_path)[0] + ".aux"
@@ -115,3 +120,75 @@ def get_equations(arxiv_tar_gz):
                 raise ValueError(f"Label {label} not found in .aux file.")
 
         return ret
+
+
+def get_bibtex(arxiv_identifier):
+    """
+    Fetches the BibTeX entry for a given arXiv identifier from inspirehep.net.
+    """
+    url = f"https://inspirehep.net/api/arxiv/{arxiv_identifier}?format=bibtex"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Failed to fetch BibTeX of {arxiv_identifier} via {url}: {response.text}"
+        )
+    return response.text.strip()
+
+
+def generate_equation_database_entry(
+    arxiv_identifier, arxiv_source_tar_gz, output_dir=None, exist_ok=True
+):
+    """
+    Generates an equation database entry for a given arXiv identifier and source tar.gz file.
+
+    Args:
+        arxiv_identifier: The arXiv identifier (e.g., '2506.23162v1').
+        arxiv_source_tar_gz: Path to the tar.gz file containing the LaTeX source.
+
+    Returns:
+        A dictionary with the BibTeX entry and equations extracted from the source.
+    """
+    bibtex = get_bibtex(arxiv_identifier)
+    equations = get_equations(arxiv_source_tar_gz)
+
+    if not output_dir:
+        output_dir = os.getcwd()
+
+    # create folder f"arxiv_{arxiv_identifier.replace('.', '_')}" in output_dir
+    output_folder = os.path.join(
+        output_dir, f"arxiv_{arxiv_identifier.replace('.', '_')}"
+    )
+    os.makedirs(output_folder, exist_ok=exist_ok)
+
+    # create empty __init__.py in output_folder
+    init_file_path = os.path.join(output_folder, "__init__.py")
+    with open(init_file_path, "w") as init_file:
+        init_file.write("import sympy\n")
+        init_file.write("from equation_database.util.doc import bib, equation\n\n")
+
+        init_file.write("@bib()\n")
+        init_file.write("def bibtex():\n")
+        init_file.write('    bibtex: str = r"""\n')
+        init_file.write(bibtex)
+        init_file.write('"""\n')
+        init_file.write("    return bibtex\n")
+
+        for eq_num, eq_content in sorted(equations.items(), key=lambda x: x[0]):
+            clean_eq_content = (
+                eq_content.replace("\n", "")
+                .replace("&", "")
+                .replace("\\dd", "\\,\\mathrm{d}")
+                .strip()
+            )
+            # remove trailing \\,, or \\,.
+            clean_eq_content = re.sub(r"\\,[,\.]$", "", clean_eq_content)
+            clean_eq_content = clean_eq_content.replace(r"_-", "_{-}")
+            init_file.write(f"@equation()\n")
+            init_file.write(f'def equation_{eq_num.replace(".", "_")}(\n')
+            init_file.write(f'    a = sympy.Symbol("a"),\n')
+            init_file.write(f'    b = sympy.Symbol("b"),\n')
+            init_file.write(f"):\n")
+            init_file.write(f'    """\n')
+            init_file.write(f"    Original: $${repr(clean_eq_content)[1:-1]}$$\n")
+            init_file.write(f'    """\n')
+            init_file.write(f"    return sympy.Eq(a,b)\n")
