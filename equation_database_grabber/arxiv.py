@@ -82,7 +82,7 @@ def extract_equation_numbers_from_aux(aux_path):
                 label = match.group(1)
                 number = match.group(2).replace("equation.", "")
                 equation_labels[label] = number
-    print(f"Extracted equation labels: {equation_labels}")
+    logging.debug(f"Extracted equation labels: {equation_labels}")
     return equation_labels
 
 
