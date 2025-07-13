@@ -99,7 +99,7 @@ def get_equations(arxiv_tar_gz):
 
     # First extract the tar.gz file into a temporary directory
 
-    with tempfile.TemporaryDirectory(delete=False) as temp_dir:
+    with tempfile.TemporaryDirectory() as temp_dir:
         with tarfile.open(arxiv_tar_gz, "r:gz") as tar:
             tar.extractall(path=temp_dir)
 
