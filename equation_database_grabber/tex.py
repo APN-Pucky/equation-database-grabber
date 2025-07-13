@@ -1,6 +1,6 @@
 import warnings
 
-from latex2sympy2 import latex2latex, latex2sympy
+from latex2sympy2 import latex2sympy
 
 
 def tex2sym(tex, clean_tex, log_is_ln=False):
