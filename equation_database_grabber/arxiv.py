@@ -10,6 +10,13 @@ import sympy
 from equation_database_grabber.tex import tex2sym
 
 
+def clean(s):
+    s = s.replace(r"\begin{aligned}", "").replace(r"\end{aligned}", "")
+    s = s.strip()
+    s = re.sub(r"\\,[,\.]$", "", s)
+    return s.strip()
+
+
 def inject_labels(tex_source):
     env_pattern = re.compile(
         r"\\begin\{(equation|align|gather)\}(.*?)\\end\{\1\}", re.DOTALL
@@ -20,12 +27,38 @@ def inject_labels(tex_source):
     def replacer(match, counter=[0]):
         env = match.group(1)
         content = match.group(2)
-        counter[0] += 1
-        label = f"eq:auto-{counter[0]}"
-        # Remove any existing \label{} commands from the content
-        content = re.sub(r"\\label\{[^}]*\}", "", content)
-        contents.append((label, content))
-        return f"\\begin{{{env}}}{content}\\label{{{label}}}\\end{{{env}}}"
+
+        if env == "align":
+            # Handle align environment with multiple lines
+            # Split by \\ but be careful not to split escaped backslashes
+            lines = re.split(r"(?<!\\)\\\\(?!\\)", content)
+
+            modified_lines = []
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if line and not re.search(r"\\nonumber", line):
+                    counter[0] += 1
+                    label = f"eq:auto-{counter[0]}"
+                    # Remove any existing \label{} commands from the line
+                    line = re.sub(r"\\label\{[^}]*\}", "", line)
+                    contents.append((label, clean(line)))
+                    # Add label to the line
+                    line = f"{line} \\label{{{label}}}"
+                modified_lines.append(line)
+
+            # Rejoin the lines with \\
+            modified_content = " \\\\\n".join(modified_lines)
+            return f"\\begin{{{env}}}{modified_content}\\end{{{env}}}"
+        else:
+
+            counter[0] += 1
+            label = f"eq:auto-{counter[0]}"
+            # Remove any existing \label{} commands from the content
+            content = re.sub(r"\\label\{[^}]*\}", "", content)
+            contents.append((label, clean(content)))
+            return f"\\begin{{{env}}}{content}\\label{{{label}}}\\end{{{env}}}"
+
+    # Strip begin/end of aligned and split environments
 
     return env_pattern.sub(replacer, tex_source), contents
 
@@ -37,7 +70,9 @@ def extract_equation_numbers_from_aux(aux_path):
     Returns:
         A dictionary mapping label names to their equation numbers (as strings).
     """
-    label_pattern = re.compile(r"\\newlabel\{([^}]+)\}\{\{([^}]+)\}\{[^}]*\}")
+    label_pattern = re.compile(
+        r"\\newlabel\{([^}]+)\}\{\{[^}]+\}\{[^}]*\}\{[^}]*\}\{([^}]+)\}\{[^}]*\}\}"
+    )
     equation_labels = {}
 
     with open(aux_path, "r", encoding="utf-8") as aux_file:
@@ -45,9 +80,9 @@ def extract_equation_numbers_from_aux(aux_path):
             match = label_pattern.search(line)
             if match:
                 label = match.group(1)
-                number = match.group(2)
+                number = match.group(2).replace("equation.", "")
                 equation_labels[label] = number
-
+    print(f"Extracted equation labels: {equation_labels}")
     return equation_labels
 
 
@@ -185,6 +220,7 @@ def generate_equation_database_entry(
             )
 
             failed = False
+            sym = None
             try:
                 sym = tex2sym(
                     clean_eq_content.replace("\\\\", ""), True, log_is_ln=False
@@ -226,6 +262,12 @@ def generate_equation_database_entry(
             # remove trailing \\,, or \\,.
             clean_eq_content = re.sub(r"\\,[,\.]$", "", clean_eq_content)
             clean_eq_content = clean_eq_content.replace(r"_-", "_{-}")
+            clean_eq_content = clean_eq_content.strip()
+
+            # check if sym is a sympy expression and not a Equation
+            if isinstance(sym, sympy.Basic) and not isinstance(sym, sympy.Eq):
+                equation = re.sub("^    return e =", "    return ", equation)
+
             init_file.write(f"\n\n")
             init_file.write(f"@equation(\n")
             init_file.write(f'    latex=r"{clean_eq_content}"\n')
