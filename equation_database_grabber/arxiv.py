@@ -211,7 +211,13 @@ def generate_equation_database_entry(
         init_file.write('"""\n')
         init_file.write("    return bibtex\n")
 
-        for eq_num, eq_content in sorted(equations.items(), key=lambda x: x[0]):
+        for eq_num, eq_content in sorted(
+            equations.items(),
+            key=lambda x: [
+                int(part) if part.isdigit() else part
+                for part in re.split(r"(\d+)", x[0])
+            ],
+        ):
             clean_eq_content = (
                 eq_content.replace("\n", "")
                 .replace("&", "")
@@ -261,6 +267,8 @@ def generate_equation_database_entry(
 
             # remove trailing \\,, or \\,.
             clean_eq_content = re.sub(r"\\,[,\.]$", "", clean_eq_content)
+            clean_eq_content = re.sub(r"_(\\text{[^}]+})", r"_\{\1\}", clean_eq_content)
+            clean_eq_content = re.sub(r"_(\\[a-zA-Z]+})", r"_\{\1\}", clean_eq_content)
             clean_eq_content = clean_eq_content.replace(r"_-", "_{-}")
             clean_eq_content = clean_eq_content.strip()
 
